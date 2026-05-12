@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DMA Trading Cockpit</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+</head>
+<body class="dark">
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo">DMA<span class="logo-accent">cockpit</span></span>
+    <span class="market-status" id="marketStatus">● MARKNADEN ÖPPEN</span>
+  </div>
+  <div class="topbar-center" id="topbarTickers"></div>
+  <div class="topbar-right">
+    <span class="clock" id="clock"></span>
+    <button class="theme-toggle" id="themeToggle" title="Byt tema">☀</button>
+    <div class="risk-badge" id="globalRisk">RISK: MEDEL</div>
+  </div>
+</header>
+
+<!-- NAV TABS -->
+<nav class="tabs">
+  <button class="tab active" data-tab="dashboard">Dashboard</button>
+  <button class="tab" data-tab="signals">Signaler</button>
+  <button class="tab" data-tab="instruments">Instrument</button>
+  <button class="tab" data-tab="risk">Riskvy</button>
+  <button class="tab" data-tab="backtest">Backtest</button>
+  <button class="tab" data-tab="news">Nyheter</button>
+</nav>
+
+<!-- ===== DASHBOARD ===== -->
+<section class="view active" id="view-dashboard">
+  <div class="dashboard-grid">
+
+    <!-- KPI ROW -->
+    <div class="kpi-row">
+      <div class="kpi-card green">
+        <div class="kpi-label">Dagens P&L</div>
+        <div class="kpi-value" id="kpiPnl">+0 kr</div>
+        <div class="kpi-sub" id="kpiPnlPct">+0.00%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Aktiva signaler</div>
+        <div class="kpi-value" id="kpiSignals">0</div>
+        <div class="kpi-sub">KÖP / SÄLJ</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Öppna positioner</div>
+        <div class="kpi-value" id="kpiPositions">0</div>
+        <div class="kpi-sub" id="kpiExposure">Exponering: 0 kr</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Trades idag</div>
+        <div class="kpi-value" id="kpiTrades">0</div>
+        <div class="kpi-sub" id="kpiWinRate">Win rate: —</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Max Drawdown</div>
+        <div class="kpi-value red" id="kpiDrawdown">0.00%</div>
+        <div class="kpi-sub">Idag</div>
+      </div>
+    </div>
+
+    <!-- MAIN CHART + TOP SIGNALS -->
+    <div class="main-row">
+      <div class="card chart-card">
+        <div class="card-header">
+          <span class="card-title">Prisdiagram</span>
+          <div class="chart-controls">
+            <select id="chartInstrument"></select>
+            <div class="tf-group">
+              <button class="tf active" data-tf="1m">1m</button>
+              <button class="tf" data-tf="5m">5m</button>
+              <button class="tf" data-tf="15m">15m</button>
+              <button class="tf" data-tf="1h">1h</button>
+            </div>
+          </div>
+        </div>
+        <canvas id="priceChart"></canvas>
+        <div class="chart-indicators">
+          <span class="ind-tag" id="chartRSI">RSI: —</span>
+          <span class="ind-tag" id="chartMACD">MACD: —</span>
+          <span class="ind-tag" id="chartVWAP">VWAP: —</span>
+          <span class="ind-tag" id="chartATR">ATR: —</span>
+          <span class="ind-tag" id="chartBB">BB: —</span>
+        </div>
+      </div>
+
+      <div class="card signals-mini-card">
+        <div class="card-header">
+          <span class="card-title">Toppignaler</span>
+          <span class="badge-count" id="signalCount">0</span>
+        </div>
+        <div id="topSignals" class="signal-list"></div>
+      </div>
+    </div>
+
+    <!-- POSITIONS + NEWS STRIP -->
+    <div class="bottom-row">
+      <div class="card positions-card">
+        <div class="card-header"><span class="card-title">Öppna positioner</span></div>
+        <table class="data-table" id="posTable">
+          <thead><tr>
+            <th>Instrument</th><th>Riktning</th><th>Pris in</th><th>Kurs</th>
+            <th>P&L</th><th>Stop</th><th>Mål</th><th>R/R</th><th>Åtgärd</th>
+          </tr></thead>
+          <tbody id="positionsBody"></tbody>
+        </table>
+      </div>
+      <div class="card news-strip-card">
+        <div class="card-header"><span class="card-title">Senaste nyheter</span></div>
+        <div id="newsFeed" class="news-feed"></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===== SIGNALS ===== -->
+<section class="view" id="view-signals">
+  <div class="signals-page">
+    <div class="signals-toolbar">
+      <div class="filter-group">
+        <label>Riktning</label>
+        <select id="filterDir">
+          <option value="all">Alla</option>
+          <option value="BUY">KÖP</option>
+          <option value="SELL">SÄLJ</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Min score</label>
+        <input type="range" min="0" max="100" value="50" id="filterScore" />
+        <span id="filterScoreVal">50</span>
+      </div>
+      <div class="filter-group">
+        <label>Risknivå</label>
+        <select id="filterRisk">
+          <option value="all">Alla</option>
+          <option value="låg">Låg</option>
+          <option value="medel">Medel</option>
+          <option value="hög">Hög</option>
+        </select>
+      </div>
+      <button class="btn-primary" id="refreshSignals">↻ Uppdatera</button>
+    </div>
+    <div id="signalsGrid" class="signals-grid"></div>
+  </div>
+</section>
+
+<!-- ===== INSTRUMENTS ===== -->
+<section class="view" id="view-instruments">
+  <div class="instruments-page">
+    <div class="inst-toolbar">
+      <input class="search-input" type="text" id="instSearch" placeholder="Sök instrument..." />
+      <select id="instSector">
+        <option value="all">Alla sektorer</option>
+        <option value="Tech">Tech</option>
+        <option value="Finans">Finans</option>
+        <option value="Industri">Industri</option>
+        <option value="Hälsovård">Hälsovård</option>
+        <option value="Energi">Energi</option>
+      </select>
+    </div>
+    <table class="data-table wide-table" id="instTable">
+      <thead><tr>
+        <th>Instrument</th><th>Sektor</th><th>Kurs</th><th>Förändring</th>
+        <th>Volym</th><th>RSI</th><th>MACD</th><th>Score</th><th>Signal</th>
+      </tr></thead>
+      <tbody id="instBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===== RISK ===== -->
+<section class="view" id="view-risk">
+  <div class="risk-page">
+    <div class="risk-grid">
+      <div class="card risk-gauge-card">
+        <div class="card-header"><span class="card-title">Daglig riskbudget</span></div>
+        <div class="gauge-wrap">
+          <canvas id="riskGauge"></canvas>
+          <div class="gauge-label" id="gaugeLabel">0%</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Riskparametrar</span></div>
+        <div class="risk-params">
+          <div class="risk-param">
+            <span>Max risk per trade</span>
+            <div class="risk-bar-wrap">
+              <div class="risk-bar-fill" style="width:0%" id="rbar1"></div>
+            </div>
+            <span class="risk-val" id="rval1">0 / 2%</span>
+          </div>
+          <div class="risk-param">
+            <span>Max daglig förlust</span>
+            <div class="risk-bar-wrap">
+              <div class="risk-bar-fill" style="width:0%" id="rbar2"></div>
+            </div>
+            <span class="risk-val" id="rval2">0 / 5%</span>
+          </div>
+          <div class="risk-param">
+            <span>Trades idag</span>
+            <div class="risk-bar-wrap">
+              <div class="risk-bar-fill" style="width:0%" id="rbar3"></div>
+            </div>
+            <span class="risk-val" id="rval3">0 / 20</span>
+          </div>
+          <div class="risk-param">
+            <span>Max exponering</span>
+            <div class="risk-bar-wrap">
+              <div class="risk-bar-fill" style="width:0%" id="rbar4"></div>
+            </div>
+            <span class="risk-val" id="rval4">0 / 80%</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Sektorexponering</span></div>
+        <canvas id="sectorChart"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">VaR & Drawdown</span></div>
+        <div class="var-stats" id="varStats"></div>
+      </div>
+    </div>
+    <div class="card risk-log-card">
+      <div class="card-header"><span class="card-title">Risklogg</span></div>
+      <div id="riskLog" class="risk-log"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== BACKTEST ===== -->
+<section class="view" id="view-backtest">
+  <div class="backtest-page">
+    <div class="card bt-config-card">
+      <div class="card-header"><span class="card-title">Konfiguration</span></div>
+      <div class="bt-form">
+        <div class="form-group">
+          <label>Instrument</label>
+          <select id="btInstrument"></select>
+        </div>
+        <div class="form-group">
+          <label>Startdatum</label>
+          <input type="date" id="btStart" />
+        </div>
+        <div class="form-group">
+          <label>Slutdatum</label>
+          <input type="date" id="btEnd" />
+        </div>
+        <div class="form-group">
+          <label>Courtage (kr)</label>
+          <input type="number" id="btCommission" value="29" />
+        </div>
+        <div class="form-group">
+          <label>Slippage (bps)</label>
+          <input type="number" id="btSlippage" value="2" />
+        </div>
+        <div class="form-group">
+          <label>Initial kapital (kr)</label>
+          <input type="number" id="btCapital" value="100000" />
+        </div>
+        <button class="btn-primary" id="runBacktest">▶ Kör backtest</button>
+      </div>
+    </div>
+    <div class="bt-results" id="btResults" style="display:none">
+      <div class="bt-stats-row" id="btStats"></div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Equity-kurva</span></div>
+        <canvas id="equityChart"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Trade-historik</span></div>
+        <table class="data-table" id="btTradeTable">
+          <thead><tr>
+            <th>Datum</th><th>Riktning</th><th>Pris in</th><th>Pris ut</th>
+            <th>P&L</th><th>Signalorsak</th>
+          </tr></thead>
+          <tbody id="btTradeBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== NEWS ===== -->
+<section class="view" id="view-news">
+  <div class="news-page">
+    <div class="news-filters">
+      <select id="newsSentiment">
+        <option value="all">Allt sentiment</option>
+        <option value="positiv">Positiv</option>
+        <option value="neutral">Neutral</option>
+        <option value="negativ">Negativ</option>
+      </select>
+      <select id="newsSource">
+        <option value="all">Alla källor</option>
+        <option value="Di">Dagens Industri</option>
+        <option value="Reuters">Reuters</option>
+        <option value="Bloomberg">Bloomberg</option>
+        <option value="Twitter">Twitter/X</option>
+        <option value="Reddit">Reddit</option>
+      </select>
+      <input type="text" class="search-input" id="newsSearch" placeholder="Sök nyheter..." />
+    </div>
+    <div id="newsGrid" class="news-grid"></div>
+  </div>
+</section>
+
+<!-- SIGNAL DETAIL MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="signalModal">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

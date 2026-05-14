@@ -31,6 +31,7 @@
   <button class="tab" data-tab="risk">Riskvy</button>
   <button class="tab" data-tab="backtest">Backtest</button>
   <button class="tab" data-tab="news">Nyheter</button>
+  <button class="tab shadow-tab" data-tab="shadow">⬡ Shadow Trading</button>
 </nav>
 
 <!-- ===== DASHBOARD ===== -->
@@ -311,6 +312,187 @@
       <input type="text" class="search-input" id="newsSearch" placeholder="Sök nyheter..." />
     </div>
     <div id="newsGrid" class="news-grid"></div>
+  </div>
+</section>
+
+<!-- ===== SHADOW TRADING ===== -->
+<section class="view" id="view-shadow">
+  <div class="shadow-page">
+
+    <!-- KPI strip -->
+    <div class="shadow-kpi-row">
+      <div class="shadow-kpi green">
+        <div class="shadow-kpi-label">Fiktivt kapital</div>
+        <div class="shadow-kpi-val" id="shCapital">100 000 kr</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Orealiserat P&amp;L</div>
+        <div class="shadow-kpi-val" id="shUnrealPnl">+0 kr</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Realiserat P&amp;L</div>
+        <div class="shadow-kpi-val" id="shRealPnl">+0 kr</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Öppna positioner</div>
+        <div class="shadow-kpi-val" id="shOpenPos">0</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Avslutade affärer</div>
+        <div class="shadow-kpi-val" id="shClosedTrades">0</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Win rate</div>
+        <div class="shadow-kpi-val" id="shWinRate">—</div>
+      </div>
+      <div class="shadow-kpi red">
+        <div class="shadow-kpi-label">Max Drawdown</div>
+        <div class="shadow-kpi-val" id="shDrawdown">0.00%</div>
+      </div>
+      <button class="btn-ghost btn-reset-shadow" id="resetShadow" title="Återställ portfolio">↺ Återställ</button>
+    </div>
+
+    <div class="shadow-main">
+
+      <!-- LEFT: Order panel -->
+      <div class="shadow-left">
+        <div class="card shadow-order-card">
+          <div class="card-header">
+            <span class="card-title">Ny order</span>
+            <span class="shadow-badge">FIKTIV HANDEL</span>
+          </div>
+          <div class="shadow-order-form">
+            <div class="so-instrument-row">
+              <div class="form-group-inline">
+                <label>Instrument</label>
+                <select id="shInstrument" class="sh-select"></select>
+              </div>
+              <div class="sh-live-price-wrap">
+                <div class="sh-live-label">Livekurs</div>
+                <div class="sh-live-price" id="shLivePrice">—</div>
+                <div class="sh-live-chg" id="shLiveChg">—</div>
+              </div>
+            </div>
+
+            <div class="sh-dir-toggle">
+              <button class="sh-dir-btn buy active" id="shBuyBtn" onclick="setShadowDir('BUY')">▲ KÖP</button>
+              <button class="sh-dir-btn sell" id="shSellBtn" onclick="setShadowDir('SELL')">▼ SÄLJ</button>
+            </div>
+
+            <div class="sh-form-row">
+              <div class="form-group-inline">
+                <label>Antal aktier</label>
+                <input type="number" id="shQty" min="1" value="100" class="sh-input" />
+              </div>
+              <div class="form-group-inline">
+                <label>Orderpris (kr)</label>
+                <input type="number" id="shPrice" step="0.01" class="sh-input" />
+              </div>
+            </div>
+
+            <div class="sh-form-row">
+              <div class="form-group-inline">
+                <label>Stop-loss (kr)</label>
+                <input type="number" id="shStop" step="0.01" class="sh-input" placeholder="Valfritt" />
+              </div>
+              <div class="form-group-inline">
+                <label>Target (kr)</label>
+                <input type="number" id="shTarget" step="0.01" class="sh-input" placeholder="Valfritt" />
+              </div>
+            </div>
+
+            <div class="sh-order-summary" id="shOrderSummary">
+              <div class="sh-sum-row"><span>Ordervärde</span><span id="shSumValue">—</span></div>
+              <div class="sh-sum-row"><span>Courtage (29 kr)</span><span>29 kr</span></div>
+              <div class="sh-sum-row"><span>Tillgängligt kapital</span><span id="shSumAvail">—</span></div>
+              <div class="sh-sum-row sh-rr-row" id="shSumRR" style="display:none"><span>Risk/Reward</span><span id="shSumRRVal">—</span></div>
+            </div>
+
+            <button class="sh-submit-btn buy" id="shSubmit" onclick="submitShadowOrder()">▲ LÄGG KÖP-ORDER</button>
+          </div>
+        </div>
+
+        <!-- Mini chart for selected instrument -->
+        <div class="card shadow-mini-chart-card">
+          <div class="card-header">
+            <span class="card-title" id="shChartTitle">Kursgraf</span>
+            <div class="tf-group">
+              <button class="tf active" data-stf="1m">1m</button>
+              <button class="tf" data-stf="5m">5m</button>
+              <button class="tf" data-stf="15m">15m</button>
+            </div>
+          </div>
+          <canvas id="shadowMiniChart"></canvas>
+          <div class="sh-chart-indicators">
+            <span class="ind-tag" id="shRSI">RSI: —</span>
+            <span class="ind-tag" id="shEMA">EMA9/21: —</span>
+            <span class="ind-tag" id="shVWAP">VWAP: —</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Positions + history -->
+      <div class="shadow-right">
+
+        <!-- Open positions -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Öppna positioner</span>
+            <span class="badge-count" id="shPosBadge">0</span>
+          </div>
+          <div class="sh-pos-wrap">
+            <table class="data-table" id="shPosTable">
+              <thead><tr>
+                <th>Instrument</th>
+                <th>Rikt.</th>
+                <th>Antal</th>
+                <th>Pris in</th>
+                <th>Kurs</th>
+                <th>P&amp;L</th>
+                <th>%</th>
+                <th>Stop</th>
+                <th>Target</th>
+                <th>Åtgärd</th>
+              </tr></thead>
+              <tbody id="shPosBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Trade history -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Handelshistorik</span>
+            <button class="btn-ghost" id="shExportBtn" onclick="exportShadowCSV()" title="Exportera CSV">↓ CSV</button>
+          </div>
+          <div class="sh-history-wrap">
+            <table class="data-table" id="shHistTable">
+              <thead><tr>
+                <th>Tid</th>
+                <th>Instrument</th>
+                <th>Rikt.</th>
+                <th>Antal</th>
+                <th>Pris in</th>
+                <th>Pris ut</th>
+                <th>P&amp;L</th>
+                <th>%</th>
+                <th>Courtage</th>
+                <th>R/R</th>
+              </tr></thead>
+              <tbody id="shHistBody"></tbody>
+            </table>
+            <div id="shHistEmpty" class="sh-empty">Inga avslutade affärer ännu</div>
+          </div>
+        </div>
+
+        <!-- Equity curve -->
+        <div class="card">
+          <div class="card-header"><span class="card-title">Portföljutveckling</span></div>
+          <canvas id="shadowEquityChart" style="height:140px"></canvas>
+        </div>
+
+      </div>
+    </div>
   </div>
 </section>
 

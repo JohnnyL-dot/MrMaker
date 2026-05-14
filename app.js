@@ -1208,6 +1208,7 @@ function updateAll() {
   if (activeTab === 'instruments') renderInstruments();
   if (activeTab === 'risk')        renderRiskPage();
   if (activeTab === 'news')        renderNewsPage();
+  if (activeTab === 'shadow')      renderShadowPage();
 }
 
 // ─── CLOCK ────────────────────────────────────
@@ -1243,8 +1244,8 @@ function initEvents() {
       if (t === 'instruments') renderInstruments();
       if (t === 'risk')        renderRiskPage();
       if (t === 'news')        renderNewsPage();
-      if (t === 'backtest') {
-        const today = new Date();
+      if (t === 'shadow')   { renderShadowPage(); initShadowTab(); }
+      if (t === 'backtest') {        const today = new Date();
         const start = new Date(today - 90 * 86400000);
         document.getElementById('btEnd').value = today.toISOString().split('T')[0];
         document.getElementById('btStart').value = start.toISOString().split('T')[0];
@@ -1334,3 +1335,625 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ─── SHADOW TRADING ───────────────────────────
+// Fristående fiktiv handelsmotor, lever bredvid STATE
+
+const SHADOW = {
+  capital: 100000,
+  initialCapital: 100000,
+  positions: [],   // { id, sym, dir, qty, entryPrice, stop, target, openTime, commission }
+  trades: [],      // closed trades with pnl
+  equityCurve: [100000],
+  activeDir: 'BUY',
+  shadowTf: '5m',
+  shadowInstrument: null,
+  toastTimer: null,
+  _tabInitDone: false,
+};
+
+// ── Init ──
+function initShadowTab() {
+  if (SHADOW._tabInitDone) return;
+  SHADOW._tabInitDone = true;
+
+  // Populate instrument select
+  const sel = document.getElementById('shInstrument');
+  sel.innerHTML = INSTRUMENTS.map(i => `<option value="${i.sym}">${i.sym} – ${i.name}</option>`).join('');
+  SHADOW.shadowInstrument = INSTRUMENTS[0].sym;
+
+  sel.addEventListener('change', e => {
+    SHADOW.shadowInstrument = e.target.value;
+    updateShadowLivePrice();
+    drawShadowMiniChart();
+    updateShadowIndicators();
+    prefillShadowPrice();
+  });
+
+  // Qty / price live summary
+  document.getElementById('shQty').addEventListener('input', updateShadowSummary);
+  document.getElementById('shPrice').addEventListener('input', updateShadowSummary);
+  document.getElementById('shStop').addEventListener('input', updateShadowSummary);
+  document.getElementById('shTarget').addEventListener('input', updateShadowSummary);
+
+  // Mini chart TF
+  document.querySelectorAll('[data-stf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-stf]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      SHADOW.shadowTf = btn.dataset.stf;
+      drawShadowMiniChart();
+    });
+  });
+
+  // Reset
+  document.getElementById('resetShadow').addEventListener('click', resetShadow);
+
+  prefillShadowPrice();
+  updateShadowLivePrice();
+  drawShadowMiniChart();
+  updateShadowIndicators();
+  updateShadowSummary();
+}
+
+function resetShadow() {
+  if (!confirm('Återställ Shadow Trading? All historik raderas.')) return;
+  SHADOW.capital = SHADOW.initialCapital;
+  SHADOW.positions = [];
+  SHADOW.trades = [];
+  SHADOW.equityCurve = [SHADOW.initialCapital];
+  renderShadowPage();
+  showShadowToast('Portfolio återställd', false);
+}
+
+// ── Direction toggle ──
+function setShadowDir(dir) {
+  SHADOW.activeDir = dir;
+  document.getElementById('shBuyBtn').classList.toggle('active', dir === 'BUY');
+  document.getElementById('shSellBtn').classList.toggle('active', dir === 'SELL');
+  const btn = document.getElementById('shSubmit');
+  btn.textContent = dir === 'BUY' ? '▲ LÄGG KÖP-ORDER' : '▼ LÄGG SÄLJ-ORDER';
+  btn.className = `sh-submit-btn ${dir === 'BUY' ? 'buy' : 'sell'}`;
+  prefillShadowPrice();
+  updateShadowSummary();
+}
+
+// ── Prefill price from live ──
+function prefillShadowPrice() {
+  const sym = SHADOW.shadowInstrument || (INSTRUMENTS[0] && INSTRUMENTS[0].sym);
+  const inst = INSTRUMENTS.find(i => i.sym === sym);
+  if (!inst) return;
+  document.getElementById('shPrice').value = inst.price.toFixed(2);
+  // Auto-suggest stop/target from ATR
+  const ind = getIndicators(sym);
+  if (ind) {
+    const atr = ind.atr;
+    if (SHADOW.activeDir === 'BUY') {
+      document.getElementById('shStop').value   = (inst.price - atr * 1.5).toFixed(2);
+      document.getElementById('shTarget').value = (inst.price + atr * 2.5).toFixed(2);
+    } else {
+      document.getElementById('shStop').value   = (inst.price + atr * 1.5).toFixed(2);
+      document.getElementById('shTarget').value = (inst.price - atr * 2.5).toFixed(2);
+    }
+  }
+  updateShadowSummary();
+}
+
+// ── Live price display ──
+function updateShadowLivePrice() {
+  const sym = SHADOW.shadowInstrument;
+  const inst = INSTRUMENTS.find(i => i.sym === sym);
+  if (!inst) return;
+  const liveEl = document.getElementById('shLivePrice');
+  const chgEl  = document.getElementById('shLiveChg');
+  if (liveEl) liveEl.textContent = inst.price.toFixed(2);
+  const chg = ((inst.price - inst.prevClose) / inst.prevClose * 100);
+  if (chgEl) {
+    chgEl.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+    chgEl.className = 'sh-live-chg ' + (chg >= 0 ? 'up' : 'down');
+  }
+}
+
+// ── Order summary ──
+function updateShadowSummary() {
+  const qty   = parseInt(document.getElementById('shQty')?.value) || 0;
+  const price = parseFloat(document.getElementById('shPrice')?.value) || 0;
+  const stop  = parseFloat(document.getElementById('shStop')?.value) || 0;
+  const tgt   = parseFloat(document.getElementById('shTarget')?.value) || 0;
+
+  const value = qty * price;
+  const avail = SHADOW.capital;
+
+  const sumVal  = document.getElementById('shSumValue');
+  const sumAvail= document.getElementById('shSumAvail');
+  const rrRow   = document.getElementById('shSumRR');
+  const rrVal   = document.getElementById('shSumRRVal');
+
+  if (sumVal)   sumVal.textContent   = value > 0 ? value.toLocaleString('sv-SE', {maximumFractionDigits:0}) + ' kr' : '—';
+  if (sumAvail) {
+    const remaining = avail - value - 29;
+    sumAvail.textContent = avail.toLocaleString('sv-SE', {maximumFractionDigits:0}) + ' kr';
+    sumAvail.style.color = remaining < 0 ? 'var(--red)' : 'var(--green)';
+  }
+
+  // R/R
+  if (stop && tgt && price) {
+    const risk   = Math.abs(price - stop);
+    const reward = Math.abs(tgt - price);
+    const rr     = risk > 0 ? (reward / risk).toFixed(2) : '—';
+    if (rrRow) rrRow.style.display = '';
+    if (rrVal) rrVal.textContent = rr + ':1';
+  } else {
+    if (rrRow) rrRow.style.display = 'none';
+  }
+}
+
+// ── Indicators on mini chart ──
+function updateShadowIndicators() {
+  const sym = SHADOW.shadowInstrument;
+  const ind = getIndicators(sym);
+  if (!ind) return;
+  const rsiEl  = document.getElementById('shRSI');
+  const emaEl  = document.getElementById('shEMA');
+  const vwapEl = document.getElementById('shVWAP');
+  if (rsiEl)  { rsiEl.textContent = `RSI: ${ind.rsi.toFixed(1)}`; rsiEl.style.color = ind.rsi > 70 ? 'var(--red)' : ind.rsi < 30 ? 'var(--green)' : ''; }
+  if (emaEl)  emaEl.textContent  = `EMA9: ${ind.ema9.toFixed(2)} / EMA21: ${ind.ema21.toFixed(2)}`;
+  if (vwapEl) vwapEl.textContent = `VWAP: ${ind.vwap.toFixed(2)}`;
+  const titleEl = document.getElementById('shChartTitle');
+  if (titleEl) titleEl.textContent = `${sym} – Kursgraf`;
+}
+
+// ── Submit order ──
+function submitShadowOrder() {
+  const sym    = SHADOW.shadowInstrument;
+  const dir    = SHADOW.activeDir;
+  const qty    = parseInt(document.getElementById('shQty').value);
+  const price  = parseFloat(document.getElementById('shPrice').value);
+  const stop   = parseFloat(document.getElementById('shStop').value) || null;
+  const target = parseFloat(document.getElementById('shTarget').value) || null;
+  const commission = 29;
+
+  if (!qty || qty < 1) return showShadowToast('Ange antal aktier', true);
+  if (!price || price <= 0) return showShadowToast('Ange ett giltigt pris', true);
+
+  const orderValue = qty * price + commission;
+  if (orderValue > SHADOW.capital) {
+    return showShadowToast(`Otillräckligt kapital (behöver ${orderValue.toFixed(0)} kr, har ${SHADOW.capital.toFixed(0)} kr)`, true);
+  }
+
+  // For SELL we allow short
+  SHADOW.capital -= orderValue;
+
+  const inst = INSTRUMENTS.find(i => i.sym === sym);
+  SHADOW.positions.push({
+    id: `sh-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
+    sym,
+    name: inst?.name || sym,
+    dir,
+    qty,
+    entryPrice: price,
+    currentPrice: price,
+    stop,
+    target,
+    commission,
+    openTime: new Date().toLocaleTimeString('sv-SE'),
+    openDate: new Date().toLocaleDateString('sv-SE'),
+  });
+
+  addRiskLog('OK', `Shadow: ${dir === 'BUY' ? 'KÖP' : 'SÄLJ'} ${qty} st ${sym} @ ${price.toFixed(2)} kr (fiktiv)`);
+  showShadowToast(`${dir === 'BUY' ? '▲ KÖP' : '▼ SÄLJ'} ${qty} × ${sym} @ ${price.toFixed(2)} kr`, dir === 'SELL');
+  renderShadowPage();
+}
+
+// ── Close position ──
+function closeShadowPosition(posId) {
+  const idx = SHADOW.positions.findIndex(p => p.id === posId);
+  if (idx === -1) return;
+  const pos = SHADOW.positions[idx];
+  const inst = INSTRUMENTS.find(i => i.sym === pos.sym);
+  const exitPrice = inst ? inst.price : pos.entryPrice;
+  const commission = 29;
+
+  const rawPnl = (exitPrice - pos.entryPrice) * pos.qty * (pos.dir === 'BUY' ? 1 : -1);
+  const pnl = rawPnl - commission;
+  const pnlPct = (rawPnl / (pos.entryPrice * pos.qty)) * 100 * (pos.dir === 'BUY' ? 1 : -1);
+  const risk   = pos.stop   ? Math.abs(pos.entryPrice - pos.stop)   : null;
+  const reward = pos.target ? Math.abs(pos.target - pos.entryPrice) : null;
+  const rr     = risk && reward ? (reward / risk).toFixed(2) : '—';
+
+  // Return capital
+  SHADOW.capital += pos.qty * exitPrice - commission;
+
+  SHADOW.trades.push({
+    ...pos,
+    exitPrice,
+    pnl,
+    pnlPct,
+    rr,
+    closeTime: new Date().toLocaleTimeString('sv-SE'),
+    closeDate: new Date().toLocaleDateString('sv-SE'),
+  });
+  SHADOW.positions.splice(idx, 1);
+
+  // Update equity curve
+  const totalEquity = SHADOW.capital + calcShadowUnrealizedPnl();
+  SHADOW.equityCurve.push(totalEquity);
+  if (SHADOW.equityCurve.length > 200) SHADOW.equityCurve.shift();
+
+  addRiskLog(pnl >= 0 ? 'OK' : 'WARN', `Shadow stängd: ${pos.sym} P&L ${fmtKr(pnl)}`);
+  showShadowToast(`${pos.sym} stängd: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(0)} kr`, pnl < 0);
+  renderShadowPage();
+}
+
+// ── Unrealized P&L ──
+function calcShadowUnrealizedPnl() {
+  return SHADOW.positions.reduce((sum, pos) => {
+    const inst = INSTRUMENTS.find(i => i.sym === pos.sym);
+    const cur = inst ? inst.price : pos.entryPrice;
+    return sum + (cur - pos.entryPrice) * pos.qty * (pos.dir === 'BUY' ? 1 : -1);
+  }, 0);
+}
+
+function calcShadowRealizedPnl() {
+  return SHADOW.trades.reduce((s, t) => s + t.pnl, 0);
+}
+
+// ── Main render ──
+function renderShadowPage() {
+  if (!document.getElementById('view-shadow')?.classList.contains('active')) return;
+
+  updateShadowLivePrice();
+  prefillShadowPrice();
+  updateShadowSummary();
+  updateShadowIndicators();
+  drawShadowMiniChart();
+
+  const unrealPnl  = calcShadowUnrealizedPnl();
+  const realPnl    = calcShadowRealizedPnl();
+  const totalEquity = SHADOW.capital + unrealPnl;
+  const wins = SHADOW.trades.filter(t => t.pnl > 0).length;
+  const winRate = SHADOW.trades.length ? Math.round(wins / SHADOW.trades.length * 100) + '%' : '—';
+
+  // Drawdown
+  const peakEquity = Math.max(SHADOW.initialCapital, ...SHADOW.equityCurve);
+  const dd = peakEquity > 0 ? Math.max(0, (peakEquity - totalEquity) / peakEquity * 100) : 0;
+
+  setElText('shCapital',      totalEquity.toLocaleString('sv-SE', {maximumFractionDigits:0}) + ' kr');
+  setElColor('shCapital',     totalEquity >= SHADOW.initialCapital ? 'var(--green)' : 'var(--red)');
+  setElText('shUnrealPnl',    fmtKr(unrealPnl));
+  setElColor('shUnrealPnl',   unrealPnl >= 0 ? 'var(--green)' : 'var(--red)');
+  setElText('shRealPnl',      fmtKr(realPnl));
+  setElColor('shRealPnl',     realPnl >= 0 ? 'var(--green)' : 'var(--red)');
+  setElText('shOpenPos',      SHADOW.positions.length);
+  setElText('shClosedTrades', SHADOW.trades.length);
+  setElText('shWinRate',      winRate);
+  setElText('shDrawdown',     dd.toFixed(2) + '%');
+  setElColor('shDrawdown',    dd > 3 ? 'var(--red)' : dd > 1 ? 'var(--yellow)' : 'var(--green)');
+
+  // Badge
+  const badge = document.getElementById('shPosBadge');
+  if (badge) badge.textContent = SHADOW.positions.length;
+
+  renderShadowPositions();
+  renderShadowHistory();
+  drawShadowEquityCurve();
+}
+
+function setElText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+function setElColor(id, color) {
+  const el = document.getElementById(id);
+  if (el) el.style.color = color;
+}
+
+// ── Positions table ──
+function renderShadowPositions() {
+  const tbody = document.getElementById('shPosBody');
+  if (!tbody) return;
+
+  if (!SHADOW.positions.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:18px;font-size:12px">Inga öppna positioner — lägg en order till vänster</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = SHADOW.positions.map(pos => {
+    const inst = INSTRUMENTS.find(i => i.sym === pos.sym);
+    const cur  = inst ? inst.price : pos.entryPrice;
+    const rawPnl = (cur - pos.entryPrice) * pos.qty * (pos.dir === 'BUY' ? 1 : -1);
+    const pnlPct = (rawPnl / (pos.entryPrice * pos.qty)) * 100;
+    const cls  = rawPnl >= 0 ? 'up' : 'down';
+
+    // Stop/target hit indicators
+    let stopHit = false, targetHit = false;
+    if (pos.stop   && pos.dir === 'BUY'  && cur <= pos.stop)   stopHit = true;
+    if (pos.stop   && pos.dir === 'SELL' && cur >= pos.stop)   stopHit = true;
+    if (pos.target && pos.dir === 'BUY'  && cur >= pos.target) targetHit = true;
+    if (pos.target && pos.dir === 'SELL' && cur <= pos.target) targetHit = true;
+
+    const rowClass = stopHit ? 'flash-red' : targetHit ? 'flash-green' : '';
+
+    return `<tr class="${rowClass}">
+      <td><strong>${pos.sym}</strong><br><span style="color:var(--text3);font-size:10px">${pos.openTime}</span></td>
+      <td><span class="signal-dir ${pos.dir === 'BUY' ? 'buy' : 'sell'}">${pos.dir === 'BUY' ? 'KÖP' : 'SÄLJ'}</span></td>
+      <td style="font-family:var(--mono)">${pos.qty}</td>
+      <td style="font-family:var(--mono)">${pos.entryPrice.toFixed(2)}</td>
+      <td style="font-family:var(--mono);color:var(--accent)">${cur.toFixed(2)}</td>
+      <td class="${cls}" style="font-family:var(--mono)">${fmtKr(rawPnl)}</td>
+      <td class="${cls}" style="font-family:var(--mono);font-size:11px">${rawPnl >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</td>
+      <td style="color:var(--red);font-family:var(--mono);font-size:11px">${pos.stop ? pos.stop.toFixed(2) : '—'}</td>
+      <td style="color:var(--green);font-family:var(--mono);font-size:11px">${pos.target ? pos.target.toFixed(2) : '—'}</td>
+      <td><button class="btn-close-pos" onclick="closeShadowPosition('${pos.id}')">Stäng</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── History table ──
+function renderShadowHistory() {
+  const tbody = document.getElementById('shHistBody');
+  const empty = document.getElementById('shHistEmpty');
+  if (!tbody) return;
+
+  if (!SHADOW.trades.length) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  tbody.innerHTML = [...SHADOW.trades].reverse().map(t => {
+    const cls = t.pnl >= 0 ? 'up' : 'down';
+    return `<tr>
+      <td style="font-size:11px;color:var(--text2)">${t.closeDate}<br>${t.closeTime}</td>
+      <td><strong>${t.sym}</strong></td>
+      <td><span class="signal-dir ${t.dir === 'BUY' ? 'buy' : 'sell'}">${t.dir === 'BUY' ? 'KÖP' : 'SÄLJ'}</span></td>
+      <td style="font-family:var(--mono)">${t.qty}</td>
+      <td style="font-family:var(--mono)">${t.entryPrice.toFixed(2)}</td>
+      <td style="font-family:var(--mono)">${t.exitPrice.toFixed(2)}</td>
+      <td class="${cls}" style="font-family:var(--mono);font-weight:bold">${fmtKr(t.pnl)}</td>
+      <td class="${cls}" style="font-family:var(--mono);font-size:11px">${t.pnl >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</td>
+      <td style="color:var(--text3);font-family:var(--mono);font-size:11px">29 kr</td>
+      <td style="font-family:var(--mono);color:var(--yellow)">${t.rr}:1</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Mini chart ──
+function drawShadowMiniChart() {
+  const canvas = document.getElementById('shadowMiniChart');
+  if (!canvas) return;
+
+  const sym = SHADOW.shadowInstrument || INSTRUMENTS[0].sym;
+  const bars = STATE.priceHistory[sym] || [];
+  const n = Math.min(60, bars.length);
+  const slice = bars.slice(-n);
+  if (!slice.length) return;
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  if (!W || !H) return;
+
+  const prices = slice.flatMap(b => [b.high, b.low]);
+  const minP = Math.min(...prices) * 0.998;
+  const maxP = Math.max(...prices) * 1.002;
+  const range = maxP - minP || 1;
+  const isDark = document.body.classList.contains('dark');
+  const PAD = { top: 8, right: 10, bottom: 20, left: 56 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const barW = Math.max(2, (cW / n) * 0.7);
+
+  ctx.fillStyle = isDark ? '#111620' : '#fff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = isDark ? '#1e2535' : '#d0daea';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.top + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    const p = maxP - (range / 4) * i;
+    ctx.fillStyle = isDark ? '#7a8fb5' : '#4a5a7a';
+    ctx.font = `9px 'Share Tech Mono',monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText(p.toFixed(2), PAD.left - 4, y + 3);
+  }
+
+  // EMA lines
+  const closes = slice.map(b => b.close);
+  const drawEma = (period, color) => {
+    if (closes.length < period) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath();
+    let ema = closes[0]; const k = 2 / (period + 1);
+    slice.forEach((b, i) => {
+      ema = closes[i] * k + ema * (1 - k);
+      const x = PAD.left + (i / (n - 1)) * cW;
+      const y = PAD.top + cH - ((ema - minP) / range) * cH;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  };
+  drawEma(9,  'rgba(0,212,255,0.65)');
+  drawEma(21, 'rgba(255,215,64,0.5)');
+
+  // Candles
+  slice.forEach((bar, i) => {
+    const x  = PAD.left + (i / (n - 1)) * cW;
+    const yH = PAD.top + cH - ((bar.high  - minP) / range) * cH;
+    const yL = PAD.top + cH - ((bar.low   - minP) / range) * cH;
+    const yO = PAD.top + cH - ((bar.open  - minP) / range) * cH;
+    const yC = PAD.top + cH - ((bar.close - minP) / range) * cH;
+    const bull = bar.close >= bar.open;
+    const col = bull ? '#00e676' : '#ff3d5a';
+    ctx.strokeStyle = col; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
+    ctx.fillStyle = col; ctx.globalAlpha = 0.85;
+    ctx.fillRect(x - barW / 2, Math.min(yO, yC), barW, Math.max(1, Math.abs(yO - yC)));
+    ctx.globalAlpha = 1;
+  });
+
+  // Draw open positions for this sym
+  SHADOW.positions.filter(p => p.sym === sym).forEach(pos => {
+    const y = PAD.top + cH - ((pos.entryPrice - minP) / range) * cH;
+    if (y < PAD.top || y > PAD.top + cH) return;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = pos.dir === 'BUY' ? '#00e676' : '#ff3d5a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = pos.dir === 'BUY' ? '#00e676' : '#ff3d5a';
+    ctx.font = 'bold 9px Share Tech Mono,monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${pos.dir === 'BUY' ? '▲' : '▼'} ${pos.entryPrice.toFixed(2)}`, W - PAD.right - 2, y - 3);
+
+    if (pos.stop) {
+      const ys = PAD.top + cH - ((pos.stop - minP) / range) * cH;
+      if (ys >= PAD.top && ys <= PAD.top + cH) {
+        ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = '#ff3d5a88'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(PAD.left, ys); ctx.lineTo(W - PAD.right, ys); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    if (pos.target) {
+      const yt = PAD.top + cH - ((pos.target - minP) / range) * cH;
+      if (yt >= PAD.top && yt <= PAD.top + cH) {
+        ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = '#00e67688'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(PAD.left, yt); ctx.lineTo(W - PAD.right, yt); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  });
+
+  // Current price
+  const last = slice[slice.length - 1]?.close;
+  if (last) {
+    const y = PAD.top + cH - ((last - minP) / range) * cH;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#00d4ff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+// ── Equity curve ──
+function drawShadowEquityCurve() {
+  const canvas = document.getElementById('shadowEquityChart');
+  if (!canvas || SHADOW.equityCurve.length < 2) return;
+
+  // Add current point
+  const curEquity = SHADOW.capital + calcShadowUnrealizedPnl();
+  const curve = [...SHADOW.equityCurve, curEquity];
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  if (!W || !H) return;
+
+  const minV = Math.min(...curve) * 0.998;
+  const maxV = Math.max(...curve) * 1.002;
+  const range = maxV - minV || 1;
+  const PAD = { top: 8, right: 8, bottom: 20, left: 70 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const isDark = document.body.classList.contains('dark');
+
+  ctx.fillStyle = isDark ? '#111620' : '#fff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = isDark ? '#1e2535' : '#d0daea'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 3; i++) {
+    const y = PAD.top + (cH / 3) * i;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    const v = maxV - (range / 3) * i;
+    ctx.fillStyle = isDark ? '#7a8fb5' : '#4a5a7a';
+    ctx.font = `9px 'Share Tech Mono',monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText((v / 1000).toFixed(1) + 'k', PAD.left - 4, y + 3);
+  }
+
+  // Baseline
+  const baseY = PAD.top + cH - ((SHADOW.initialCapital - minV) / range) * cH;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = isDark ? '#3d5080' : '#b0bbd0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD.left, baseY); ctx.lineTo(W - PAD.right, baseY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Fill + line
+  const lastVal = curve[curve.length - 1];
+  const isPositive = lastVal >= SHADOW.initialCapital;
+  const lineColor = isPositive ? '#00e676' : '#ff3d5a';
+
+  ctx.beginPath();
+  curve.forEach((v, i) => {
+    const x = PAD.left + (i / (curve.length - 1)) * cW;
+    const y = PAD.top + cH - ((v - minV) / range) * cH;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(PAD.left + cW, PAD.top + cH);
+  ctx.lineTo(PAD.left, PAD.top + cH);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + cH);
+  grad.addColorStop(0, isPositive ? 'rgba(0,230,118,0.25)' : 'rgba(255,61,90,0.25)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.01)');
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.beginPath();
+  curve.forEach((v, i) => {
+    const x = PAD.left + (i / (curve.length - 1)) * cW;
+    const y = PAD.top + cH - ((v - minV) / range) * cH;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// ── Toast notification ──
+function showShadowToast(msg, isSell = false) {
+  let toast = document.getElementById('sh-toast-el');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'sh-toast-el';
+    toast.className = 'sh-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.className = `sh-toast ${isSell ? 'sell-toast' : ''}`;
+  // force reflow
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  clearTimeout(SHADOW.toastTimer);
+  SHADOW.toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+}
+
+// ── CSV Export ──
+function exportShadowCSV() {
+  if (!SHADOW.trades.length) return showShadowToast('Ingen historik att exportera', true);
+  const header = ['Datum','Tid','Instrument','Riktning','Antal','Pris in','Pris ut','P&L (kr)','P&L (%)','Courtage','R/R'];
+  const rows = SHADOW.trades.map(t => [
+    t.closeDate, t.closeTime, t.sym, t.dir, t.qty,
+    t.entryPrice.toFixed(2), t.exitPrice.toFixed(2),
+    t.pnl.toFixed(2), t.pnlPct.toFixed(2), '29', t.rr,
+  ]);
+  const csv = [header, ...rows].map(r => r.join(';')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `shadow-trading-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showShadowToast('Handelshistorik exporterad som CSV');
+}

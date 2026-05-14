@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DMA Trading Cockpit</title>
+  <title>DMA Trading Cockpit v1.2.0</title>
   <style>
 /* =============================================
    DMA TRADING COCKPIT — STYLE
@@ -1366,6 +1366,76 @@ body {
   .shadow-main { grid-template-columns: 1fr; }
 }
 
+
+/* =============================================
+   APP VERSION BADGE
+   ============================================= */
+.app-version {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  margin-left: 8px;
+  letter-spacing: 1px;
+  vertical-align: middle;
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+/* =============================================
+   CRYPTO PAGE
+   ============================================= */
+.tabs .tab.crypto-tab {
+  color: var(--orange);
+  border-bottom-color: transparent;
+  font-family: var(--mono);
+}
+.tabs .tab.crypto-tab.active {
+  color: var(--orange);
+  border-bottom-color: var(--orange);
+}
+.tabs .tab.crypto-tab:hover { color: var(--orange); }
+
+.crypto-page {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.crypto-kpi-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius2);
+  padding: 10px 14px;
+}
+
+.crypto-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.crypto-table-card { overflow: hidden; }
+
+.crypto-bottom {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 12px;
+}
+
+.crypto-chart-card canvas { width: 100%; display: block; }
+
+.cg-row:hover { background: var(--bg2) !important; }
+
+@media (max-width: 900px) {
+  .crypto-bottom { grid-template-columns: 1fr; }
+}
+
 </style>
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
 </head>
@@ -1374,7 +1444,7 @@ body {
 <!-- TOP BAR -->
 <header class="topbar">
   <div class="topbar-left">
-    <span class="logo">DMA<span class="logo-accent">cockpit</span></span>
+    <span class="logo">DMA<span class="logo-accent">cockpit</span></span><span class="app-version">v1.2.0</span>
     <span class="market-status" id="marketStatus">● MARKNADEN ÖPPEN</span>
   </div>
   <div class="topbar-center" id="topbarTickers"></div>
@@ -1394,6 +1464,7 @@ body {
   <button class="tab" data-tab="backtest">Backtest</button>
   <button class="tab" data-tab="news">Nyheter</button>
   <button class="tab shadow-tab" data-tab="shadow">⬡ Shadow Trading</button>
+  <button class="tab crypto-tab" data-tab="crypto">₿ Krypto</button>
 </nav>
 
 <!-- ===== DASHBOARD ===== -->
@@ -1677,6 +1748,85 @@ body {
   </div>
 </section>
 
+<!-- ===== KRYPTO ===== -->
+<section class="view" id="view-crypto">
+  <div class="crypto-page">
+
+    <div class="crypto-kpi-row">
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Data</div>
+        <div class="shadow-kpi-val" id="cgStatus" style="font-size:12px">Ansluter...</div>
+      </div>
+      <div class="shadow-kpi">
+        <div class="shadow-kpi-label">Senast uppdaterad</div>
+        <div class="shadow-kpi-val" id="cgLastUpdate" style="font-size:12px">—</div>
+      </div>
+      <div class="shadow-kpi green">
+        <div class="shadow-kpi-label">Bäst 24h</div>
+        <div class="shadow-kpi-val" id="cgBest">—</div>
+      </div>
+      <div class="shadow-kpi red">
+        <div class="shadow-kpi-label">Sämst 24h</div>
+        <div class="shadow-kpi-val" id="cgWorst">—</div>
+      </div>
+      <span class="shadow-badge" style="margin-left:auto">CoinGecko API • SEK</span>
+    </div>
+
+    <div class="crypto-main">
+      <!-- Crypto table -->
+      <div class="card crypto-table-card">
+        <div class="card-header">
+          <span class="card-title">Kryptovalutor — Live (SEK)</span>
+          <button class="btn-ghost" id="cgRefreshBtn">↻ Uppdatera</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table wide-table" id="cgTable">
+            <thead><tr>
+              <th>#</th>
+              <th>Namn</th>
+              <th>Kurs (SEK)</th>
+              <th>24h %</th>
+              <th>24h Hög</th>
+              <th>24h Låg</th>
+              <th>Market Cap</th>
+              <th>Volym 24h</th>
+              <th>ATH</th>
+              <th>Från ATH</th>
+            </tr></thead>
+            <tbody id="cgBody">
+              <tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text3)">Hämtar live-data från CoinGecko...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="crypto-bottom">
+        <!-- Mini chart -->
+        <div class="card crypto-chart-card">
+          <div class="card-header">
+            <span class="card-title" id="cgChartTitle">Välj en krypto för graf</span>
+            <div class="tf-group">
+              <button class="tf active" data-cgtf="1">1d</button>
+              <button class="tf" data-cgtf="7">7d</button>
+              <button class="tf" data-cgtf="30">30d</button>
+            </div>
+          </div>
+          <canvas id="cgChart" style="height:200px"></canvas>
+        </div>
+
+        <!-- Fear & Greed + dominance -->
+        <div class="card crypto-stats-card">
+          <div class="card-header"><span class="card-title">Marknadsöversikt</span></div>
+          <div id="cgMarketStats" class="var-stats">
+            <div class="var-row"><span class="lbl">Laddar...</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
 <!-- ===== SHADOW TRADING ===== -->
 <section class="view" id="view-shadow">
   <div class="shadow-page">
@@ -1874,6 +2024,15 @@ body {
 // =============================================
 
 'use strict';
+
+// ─── VERSION ──────────────────────────────────
+const VERSION = {
+  app:  '1.2.0',
+  html: '1.2.0',
+  js:   '1.2.0',
+  css:  '1.2.0',
+  date: '2026-05-14',
+};
 
 // ─── CONFIG ───────────────────────────────────
 const CONFIG = {
@@ -3232,6 +3391,7 @@ function updateAll() {
   if (activeTab === 'risk')        renderRiskPage();
   if (activeTab === 'news')        renderNewsPage();
   if (activeTab === 'shadow')      renderShadowPage();
+  if (activeTab === 'crypto')      renderCryptoTable();
 }
 
 // ─── CLOCK ────────────────────────────────────
@@ -3268,6 +3428,7 @@ function initEvents() {
       if (t === 'risk')        renderRiskPage();
       if (t === 'news')        renderNewsPage();
       if (t === 'shadow')   { renderShadowPage(); initShadowTab(); }
+      if (t === 'crypto')   { initCryptoTab(); }
       if (t === 'backtest') {        const today = new Date();
         const start = new Date(today - 90 * 86400000);
         document.getElementById('btEnd').value = today.toISOString().split('T')[0];
@@ -3983,6 +4144,305 @@ function exportShadowCSV() {
   URL.revokeObjectURL(url);
   showShadowToast('Handelshistorik exporterad som CSV');
 }
+
+
+// ═══════════════════════════════════════════════
+//  COINGECKO LIVE KRYPTO
+// ═══════════════════════════════════════════════
+
+const CG = {
+  BASE:     'https://api.coingecko.com/api/v3',
+  data:     [],          // array of coin objects from CoinGecko
+  ohlc:     {},          // coinId -> array of [ts, o, h, l, c]
+  lastFetch: 0,
+  fetchInterval: 60000,  // 60s (free tier: 30 req/min)
+  status:   'init',
+  selectedCoin: 'bitcoin',
+  selectedDays: 1,
+  tabInitDone: false,
+  timer: null,
+
+  COINS: [
+    { id:'bitcoin',      sym:'BTC',  name:'Bitcoin'    },
+    { id:'ethereum',     sym:'ETH',  name:'Ethereum'   },
+    { id:'solana',       sym:'SOL',  name:'Solana'     },
+    { id:'ripple',       sym:'XRP',  name:'XRP'        },
+    { id:'cardano',      sym:'ADA',  name:'Cardano'    },
+    { id:'avalanche-2',  sym:'AVAX', name:'Avalanche'  },
+    { id:'chainlink',    sym:'LINK', name:'Chainlink'  },
+    { id:'polkadot',     sym:'DOT',  name:'Polkadot'   },
+    { id:'dogecoin',     sym:'DOGE', name:'Dogecoin'   },
+    { id:'uniswap',      sym:'UNI',  name:'Uniswap'    },
+  ],
+};
+
+// ── Fetch all coin prices (batch) ───────────────
+async function fetchCGPrices() {
+  const ids = CG.COINS.map(c => c.id).join(',');
+  const url = `${CG.BASE}/coins/markets?vs_currency=sek&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=false&price_change_percentage=24h`;
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    CG.data = data;
+    CG.lastFetch = Date.now();
+    CG.status = 'live';
+    updateCGStatus();
+    return true;
+  } catch(e) {
+    console.warn('CoinGecko fetch failed:', e.message);
+    CG.status = 'error';
+    updateCGStatus();
+    return false;
+  }
+}
+
+// ── Fetch OHLC for chart ────────────────────────
+async function fetchCGOHLC(coinId, days) {
+  const url = `${CG.BASE}/coins/${coinId}/ohlc?vs_currency=sek&days=${days}`;
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const raw = await res.json(); // [[ts, o, h, l, c], ...]
+    CG.ohlc[coinId + '_' + days] = raw;
+    drawCGChart();
+  } catch(e) {
+    console.warn('CG OHLC fetch failed:', e.message);
+  }
+}
+
+// ── Status badge ────────────────────────────────
+function updateCGStatus() {
+  const el = document.getElementById('cgStatus');
+  const lu = document.getElementById('cgLastUpdate');
+  if (!el) return;
+  if (CG.status === 'live') {
+    el.textContent = '● Live (CoinGecko)';
+    el.style.color = 'var(--green)';
+    if (lu) lu.textContent = new Date(CG.lastFetch).toLocaleTimeString('sv-SE');
+  } else if (CG.status === 'error') {
+    el.textContent = '✕ API-fel – försöker igen';
+    el.style.color = 'var(--red)';
+  } else {
+    el.textContent = '○ Ansluter...';
+    el.style.color = 'var(--text3)';
+  }
+}
+
+// ── Render coin table ───────────────────────────
+function renderCryptoTable() {
+  const tbody = document.getElementById('cgBody');
+  if (!tbody) return;
+  if (!CG.data.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text3)">Hämtar data...</td></tr>';
+    return;
+  }
+
+  // Best / worst
+  const sorted = [...CG.data].filter(c => c.price_change_percentage_24h != null)
+    .sort((a, b) => b.price_change_percentage_24h - a.price_change_percentage_24h);
+  const best  = sorted[0];
+  const worst = sorted[sorted.length - 1];
+  if (best)  { const el = document.getElementById('cgBest');  if(el) { el.textContent = `${best.symbol.toUpperCase()} ${best.price_change_percentage_24h >= 0 ? '+' : ''}${best.price_change_percentage_24h.toFixed(2)}%`; } }
+  if (worst) { const el = document.getElementById('cgWorst'); if(el) { el.textContent = `${worst.symbol.toUpperCase()} ${worst.price_change_percentage_24h.toFixed(2)}%`; } }
+
+  tbody.innerHTML = CG.data.map((c, i) => {
+    const chg = c.price_change_percentage_24h || 0;
+    const cls = chg >= 0 ? 'up' : 'down';
+    const fromAth = c.ath ? ((c.current_price - c.ath) / c.ath * 100) : null;
+    const fmtSEK = v => v >= 1000000000
+      ? (v/1000000000).toFixed(2) + ' Mdr'
+      : v >= 1000000 ? (v/1000000).toFixed(1) + ' Mkr'
+      : v >= 1000    ? (v/1000).toFixed(1) + 'k'
+      : v?.toFixed(2) || '—';
+    const fmtPrice = v => v >= 10000 ? v.toLocaleString('sv-SE', {maximumFractionDigits:0})
+      : v >= 1 ? v.toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2})
+      : v?.toFixed(4) || '—';
+
+    return `<tr class="cg-row" style="cursor:pointer" onclick="selectCGCoin('${c.id}','${c.name}')">
+      <td style="color:var(--text3);font-family:var(--mono)">${i+1}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <img src="${c.image}" style="width:20px;height:20px;border-radius:50%" onerror="this.style.display='none'" />
+          <div>
+            <div style="font-weight:600">${c.name}</div>
+            <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${c.symbol?.toUpperCase()}</div>
+          </div>
+        </div>
+      </td>
+      <td style="font-family:var(--mono);font-size:13px">${fmtPrice(c.current_price)} kr</td>
+      <td class="${cls}" style="font-family:var(--mono);font-weight:600">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</td>
+      <td style="font-family:var(--mono);color:var(--green);font-size:11px">${fmtPrice(c.high_24h)} kr</td>
+      <td style="font-family:var(--mono);color:var(--red);font-size:11px">${fmtPrice(c.low_24h)} kr</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${fmtSEK(c.market_cap)}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text2)">${fmtSEK(c.total_volume)}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--accent)">${fmtPrice(c.ath)} kr</td>
+      <td class="down" style="font-family:var(--mono);font-size:11px">${fromAth != null ? fromAth.toFixed(1)+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  renderCGMarketStats();
+}
+
+// ── Market stats panel ──────────────────────────
+function renderCGMarketStats() {
+  const el = document.getElementById('cgMarketStats');
+  if (!el || !CG.data.length) return;
+
+  const btc  = CG.data.find(c => c.id === 'bitcoin');
+  const eth  = CG.data.find(c => c.id === 'ethereum');
+  const totalMCap = CG.data.reduce((s, c) => s + (c.market_cap || 0), 0);
+  const btcDom = btc ? (btc.market_cap / totalMCap * 100).toFixed(1) : '—';
+  const ethDom = eth ? (eth.market_cap / totalMCap * 100).toFixed(1) : '—';
+  const totalVol = CG.data.reduce((s, c) => s + (c.total_volume || 0), 0);
+  const winners = CG.data.filter(c => (c.price_change_percentage_24h || 0) > 0).length;
+
+  const rows = [
+    ['BTC-dominans',     btcDom + '%'],
+    ['ETH-dominans',     ethDom + '%'],
+    ['Vinnare / Förlorare', `${winners} / ${CG.data.length - winners}`],
+    ['Total volym 24h',  (() => { const v = totalVol; return v >= 1e9 ? (v/1e9).toFixed(1)+' Mdr kr' : (v/1e6).toFixed(0)+' Mkr'; })()],
+    ['BTC pris',         btc ? btc.current_price.toLocaleString('sv-SE', {maximumFractionDigits:0}) + ' kr' : '—'],
+    ['ETH pris',         eth ? eth.current_price.toLocaleString('sv-SE', {maximumFractionDigits:0}) + ' kr' : '—'],
+    ['Källa',            'CoinGecko (gratis API)'],
+    ['Valuta',           'SEK'],
+  ];
+
+  el.innerHTML = rows.map(([lbl, val]) =>
+    `<div class="var-row"><span class="lbl">${lbl}</span><span class="val">${val}</span></div>`
+  ).join('');
+}
+
+// ── Select coin for chart ───────────────────────
+function selectCGCoin(id, name) {
+  CG.selectedCoin = id;
+  const title = document.getElementById('cgChartTitle');
+  if (title) title.textContent = `${name} — Kursgraf (SEK)`;
+  // Highlight selected row
+  document.querySelectorAll('.cg-row').forEach(r => r.style.background = '');
+  fetchCGOHLC(id, CG.selectedDays);
+}
+
+// ── Draw OHLC chart ─────────────────────────────
+function drawCGChart() {
+  const canvas = document.getElementById('cgChart');
+  if (!canvas) return;
+  const key  = CG.selectedCoin + '_' + CG.selectedDays;
+  const bars = CG.ohlc[key];
+  if (!bars || bars.length < 2) return;
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  if (!W || !H) return;
+
+  const isDark = document.body.classList.contains('dark');
+  const PAD = { top: 10, right: 14, bottom: 22, left: 70 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const n = bars.length;
+  const barW = Math.max(1.5, (cW / n) * 0.7);
+
+  const allH = bars.map(b => b[2]);
+  const allL = bars.map(b => b[3]);
+  const minP = Math.min(...allL) * 0.998;
+  const maxP = Math.max(...allH) * 1.002;
+  const range = maxP - minP || 1;
+
+  ctx.fillStyle = isDark ? '#111620' : '#fff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = isDark ? '#1e2535' : '#d0daea'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.top + (cH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    const p = maxP - (range / 4) * i;
+    ctx.fillStyle = isDark ? '#7a8fb5' : '#4a5a7a';
+    ctx.font = `9px 'Share Tech Mono',monospace`;
+    ctx.textAlign = 'right';
+    const label = p >= 1000 ? p.toLocaleString('sv-SE', {maximumFractionDigits:0}) : p.toFixed(p < 1 ? 4 : 2);
+    ctx.fillText(label, PAD.left - 4, y + 3);
+  }
+
+  // Candles
+  bars.forEach((b, i) => {
+    const [ts, o, h, l, c] = b;
+    const x  = PAD.left + (i / (n - 1)) * cW;
+    const yH = PAD.top + cH - ((h - minP) / range) * cH;
+    const yL = PAD.top + cH - ((l - minP) / range) * cH;
+    const yO = PAD.top + cH - ((o - minP) / range) * cH;
+    const yC = PAD.top + cH - ((c - minP) / range) * cH;
+    const bull = c >= o;
+    const col  = bull ? '#00e676' : '#ff3d5a';
+    ctx.strokeStyle = col; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
+    ctx.fillStyle = col; ctx.globalAlpha = 0.85;
+    ctx.fillRect(x - barW/2, Math.min(yO, yC), barW, Math.max(1, Math.abs(yO - yC)));
+    ctx.globalAlpha = 1;
+  });
+
+  // X labels (3 points)
+  ctx.fillStyle = isDark ? '#7a8fb5' : '#4a5a7a';
+  ctx.font = `9px 'Share Tech Mono',monospace`;
+  ctx.textAlign = 'center';
+  [0, Math.floor(n/2), n-1].forEach(i => {
+    if (!bars[i]) return;
+    const x = PAD.left + (i / (n - 1)) * cW;
+    const d = new Date(bars[i][0]);
+    const label = CG.selectedDays === 1
+      ? d.toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'})
+      : d.toLocaleDateString('sv-SE', {month:'short', day:'numeric'});
+    ctx.fillText(label, x, H - PAD.bottom + 12);
+  });
+}
+
+// ── Init tab ────────────────────────────────────
+function initCryptoTab() {
+  if (CG.tabInitDone) return;
+  CG.tabInitDone = true;
+
+  // TF buttons
+  document.querySelectorAll('[data-cgtf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-cgtf]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      CG.selectedDays = parseInt(btn.dataset.cgtf);
+      fetchCGOHLC(CG.selectedCoin, CG.selectedDays);
+    });
+  });
+
+  // Refresh button
+  const rb = document.getElementById('cgRefreshBtn');
+  if (rb) rb.addEventListener('click', async () => {
+    rb.textContent = '↻ Hämtar...';
+    await fetchCGPrices();
+    renderCryptoTable();
+    fetchCGOHLC(CG.selectedCoin, CG.selectedDays);
+    rb.textContent = '↻ Uppdatera';
+  });
+
+  // Initial load
+  fetchCGPrices().then(() => {
+    renderCryptoTable();
+    fetchCGOHLC(CG.selectedCoin, CG.selectedDays);
+    // Set initial chart title
+    const title = document.getElementById('cgChartTitle');
+    if (title) title.textContent = 'Bitcoin — Kursgraf (SEK)';
+  });
+
+  // Auto-refresh every 60s
+  if (CG.timer) clearInterval(CG.timer);
+  CG.timer = setInterval(async () => {
+    await fetchCGPrices();
+    renderCryptoTable();
+  }, CG.fetchInterval);
+}
+
 
 </script>
 </body>

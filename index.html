@@ -1884,6 +1884,156 @@ const CONFIG = {
   maxExposurePct: 80,         // %
   initialCapital: 100000,
 };
+// ─── YAHOO FINANCE LIVE DATA ──────────────────
+
+const YF = {
+  BASE: 'https://query1.finance.yahoo.com/v8/finance/chart/',
+  QUOTE: 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=',
+  liveData: {},       // sym -> { price, prevClose, change, changePct, volume, high, low, open }
+  lastFetch: 0,
+  fetchInterval: 15000,  // fetch quotes every 15s
+  historyFetched: {},    // sym -> bool
+  status: 'init',        // 'init' | 'live' | 'fallback'
+};
+
+// Fetch current quotes for all instruments (batch)
+async function fetchYFQuotes() {
+  const tickers = INSTRUMENTS.map(i => i.yf).join(',');
+  const url = YF.QUOTE + encodeURIComponent(tickers);
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const results = data?.quoteResponse?.result || [];
+    if (!results.length) throw new Error('No results');
+
+    results.forEach(q => {
+      const inst = INSTRUMENTS.find(i => i.yf === q.symbol);
+      if (!inst) return;
+      const price    = q.regularMarketPrice;
+      const prevClose= q.regularMarketPreviousClose;
+      if (!price) return;
+
+      YF.liveData[inst.sym] = {
+        price, prevClose,
+        change:    q.regularMarketChange    || 0,
+        changePct: q.regularMarketChangePercent || 0,
+        volume:    q.regularMarketVolume    || 0,
+        high:      q.regularMarketDayHigh   || price,
+        low:       q.regularMarketDayLow    || price,
+        open:      q.regularMarketOpen      || price,
+        name:      q.longName || q.shortName || inst.name,
+        currency:  q.currency || 'SEK',
+        marketState: q.marketState || 'REGULAR',
+      };
+
+      // Inject into INSTRUMENTS so rest of app uses live price
+      inst.price     = price;
+      inst.prevClose = prevClose;
+
+      // Push a new bar into priceHistory with real data
+      const hist = STATE.priceHistory[inst.sym];
+      if (hist && hist.length) {
+        const last = hist[hist.length - 1];
+        hist.push({
+          open:   q.regularMarketOpen || last.close,
+          high:   q.regularMarketDayHigh || price,
+          low:    q.regularMarketDayLow  || price,
+          close:  price,
+          volume: q.regularMarketVolume  || 100000,
+          ts:     Date.now(),
+        });
+        if (hist.length > 300) hist.shift();
+      }
+    });
+
+    YF.status = 'live';
+    YF.lastFetch = Date.now();
+    updateLiveStatusBadge();
+    return true;
+  } catch(e) {
+    console.warn('YF quote fetch failed:', e.message);
+    YF.status = 'fallback';
+    updateLiveStatusBadge();
+    return false;
+  }
+}
+
+// Fetch intraday OHLCV bars for one instrument (5m, 1d range)
+async function fetchYFHistory(sym) {
+  const inst = INSTRUMENTS.find(i => i.sym === sym);
+  if (!inst || YF.historyFetched[sym]) return;
+  const url = `${YF.BASE}${inst.yf}?interval=5m&range=1d`;
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const chart = data?.chart?.result?.[0];
+    if (!chart) throw new Error('No chart data');
+
+    const ts     = chart.timestamp || [];
+    const ohlcv  = chart.indicators?.quote?.[0] || {};
+    if (!ts.length) return;
+
+    const bars = ts.map((t, i) => ({
+      ts:     t * 1000,
+      open:   ohlcv.open?.[i]   || 0,
+      high:   ohlcv.high?.[i]   || 0,
+      low:    ohlcv.low?.[i]    || 0,
+      close:  ohlcv.close?.[i]  || 0,
+      volume: ohlcv.volume?.[i] || 0,
+    })).filter(b => b.close > 0);
+
+    if (bars.length > 5) {
+      // Keep last 200 simulated bars as early history, replace recent with real
+      const hist = STATE.priceHistory[sym] || [];
+      const keepSim = hist.slice(0, Math.max(0, hist.length - bars.length));
+      STATE.priceHistory[sym] = [...keepSim, ...bars].slice(-300);
+      YF.historyFetched[sym] = true;
+      console.log(`YF history loaded: ${sym} — ${bars.length} bars`);
+    }
+  } catch(e) {
+    console.warn(`YF history fetch failed for ${sym}:`, e.message);
+  }
+}
+
+// Live status badge in topbar
+function updateLiveStatusBadge() {
+  const ms = document.getElementById('marketStatus');
+  if (!ms) return;
+  const now = new Date();
+  const h = now.getHours(), m = now.getMinutes();
+  // Swedish market: 09:00–17:30
+  const isOpen = (h > 9 || (h === 9 && m >= 0)) && (h < 17 || (h === 17 && m <= 30));
+
+  if (YF.status === 'live') {
+    ms.textContent = isOpen ? '● LIVE — MARKNADEN ÖPPEN' : '● LIVE — MARKNADEN STÄNGD';
+    ms.style.color = isOpen ? 'var(--green)' : 'var(--yellow)';
+  } else if (YF.status === 'fallback') {
+    ms.textContent = '◌ SIMULERAD DATA';
+    ms.style.color = 'var(--text3)';
+  } else {
+    ms.textContent = '○ ANSLUTER...';
+    ms.style.color = 'var(--text3)';
+  }
+}
+
+// Start live data loop
+async function startLiveData() {
+  console.log('Starting Yahoo Finance live data...');
+  // Initial fetch
+  const ok = await fetchYFQuotes();
+  if (ok) {
+    // Fetch history for first instrument
+    fetchYFHistory(INSTRUMENTS[0].sym);
+  }
+  // Recurring quote updates
+  setInterval(async () => {
+    await fetchYFQuotes();
+  }, YF.fetchInterval);
+}
+
+
 
 // ─── STATE ────────────────────────────────────
 const STATE = {
@@ -1906,18 +2056,18 @@ const STATE = {
 
 // ─── INSTRUMENTS ──────────────────────────────
 const INSTRUMENTS = [
-  { sym:'ERIC B', name:'Ericsson B',    sector:'Tech',       price:69.5,   vol:0.018 },
-  { sym:'VOLV B', name:'Volvo B',       sector:'Industri',   price:245.0,  vol:0.014 },
-  { sym:'SSAB A', name:'SSAB A',        sector:'Industri',   price:52.3,   vol:0.022 },
-  { sym:'SEB A',  name:'SEB A',         sector:'Finans',     price:183.4,  vol:0.012 },
-  { sym:'SHB A',  name:'Handelsbanken', sector:'Finans',     price:108.9,  vol:0.011 },
-  { sym:'AZN',    name:'AstraZeneca',   sector:'Hälsovård',  price:1342.0, vol:0.009 },
-  { sym:'SAND',   name:'Sandvik',       sector:'Industri',   price:195.6,  vol:0.016 },
-  { sym:'ALFA',   name:'Alfa Laval',    sector:'Industri',   price:415.2,  vol:0.015 },
-  { sym:'SWED A', name:'Swedbank A',    sector:'Finans',     price:213.7,  vol:0.013 },
-  { sym:'NIBE B', name:'NIBE Industrier',sector:'Energi',    price:45.1,   vol:0.025 },
-  { sym:'LUNE',   name:'Lundin Energy', sector:'Energi',     price:312.0,  vol:0.020 },
-  { sym:'ATCO A', name:'Atlas Copco',   sector:'Industri',   price:132.8,  vol:0.015 },
+  { sym:'ERIC B', name:'Ericsson B',     sector:'Tech',      price:69.5,   vol:0.018, yf:'ERIC-B.ST' },
+  { sym:'VOLV B', name:'Volvo B',        sector:'Industri',  price:245.0,  vol:0.014, yf:'VOLV-B.ST' },
+  { sym:'SSAB A', name:'SSAB A',         sector:'Industri',  price:52.3,   vol:0.022, yf:'SSAB-A.ST' },
+  { sym:'SEB A',  name:'SEB A',          sector:'Finans',    price:183.4,  vol:0.012, yf:'SEB-A.ST'  },
+  { sym:'SHB A',  name:'Handelsbanken',  sector:'Finans',    price:108.9,  vol:0.011, yf:'SHB-A.ST'  },
+  { sym:'AZN',    name:'AstraZeneca',    sector:'Hälsovård', price:1342.0, vol:0.009, yf:'AZN.ST'    },
+  { sym:'SAND',   name:'Sandvik',        sector:'Industri',  price:195.6,  vol:0.016, yf:'SAND.ST'   },
+  { sym:'ALFA',   name:'Alfa Laval',     sector:'Industri',  price:415.2,  vol:0.015, yf:'ALFA.ST'   },
+  { sym:'SWED A', name:'Swedbank A',     sector:'Finans',    price:213.7,  vol:0.013, yf:'SWED-A.ST' },
+  { sym:'NIBE B', name:'NIBE Industrier',sector:'Energi',    price:45.1,   vol:0.025, yf:'NIBE-B.ST' },
+  { sym:'LUNE',   name:'Lundin Mining',  sector:'Energi',    price:312.0,  vol:0.020, yf:'LUNE.ST'   },
+  { sym:'ATCO A', name:'Atlas Copco',    sector:'Industri',  price:132.8,  vol:0.015, yf:'ATCO-A.ST' },
 ];
 
 // ─── HELPER UTILITIES ─────────────────────────
@@ -2470,12 +2620,16 @@ function drawSectorChart() {
 function renderTopbarTickers() {
   const el = document.getElementById('topbarTickers');
   el.innerHTML = INSTRUMENTS.slice(0, 6).map(inst => {
-    const chg = ((inst.price - inst.prevClose) / inst.prevClose * 100);
-    const cls = chg >= 0 ? 'up' : 'down';
+    const live = YF.liveData[inst.sym];
+    const chgPct = live ? live.changePct : ((inst.price - inst.prevClose) / inst.prevClose * 100);
+    const price  = live ? live.price     : inst.price;
+    const cls    = chgPct >= 0 ? 'up' : 'down';
+    const liveTag = live ? '<span style="font-size:9px;color:var(--green);font-family:var(--mono)">●</span>' : '';
     return `<div class="ticker-item">
+      ${liveTag}
       <span class="sym">${inst.sym}</span>
-      <span class="price">${inst.price.toFixed(2)}</span>
-      <span class="chg ${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</span>
+      <span class="price">${price.toFixed(2)}</span>
+      <span class="chg ${cls}">${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%</span>
     </div>`;
   }).join('');
 }
@@ -3141,6 +3295,7 @@ function initEvents() {
   // Chart instrument
   document.getElementById('chartInstrument').addEventListener('change', e => {
     STATE.chartInstrument = e.target.value;
+    fetchYFHistory(STATE.chartInstrument);
     drawPriceChart();
     renderChartIndicators();
   });
@@ -3199,7 +3354,8 @@ function init() {
   setInterval(updateAll, CONFIG.updateInterval);
 
   updateClock();
-  console.log('DMA Trading Cockpit v1.0 — MVP 1 initierad');
+  startLiveData();
+  console.log('DMA Trading Cockpit v1.0 — MVP 1 + Yahoo Finance live data');
   console.log(`Laddade ${INSTRUMENTS.length} instrument, ${STATE.signals.length} signaler genererade`);
 }
 
@@ -3233,6 +3389,7 @@ function initShadowTab() {
 
   sel.addEventListener('change', e => {
     SHADOW.shadowInstrument = e.target.value;
+    fetchYFHistory(SHADOW.shadowInstrument);
     updateShadowLivePrice();
     drawShadowMiniChart();
     updateShadowIndicators();
